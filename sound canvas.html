@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sound Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Tone.js for web audio synthesis -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #0c1a26; }
+        #drawing-canvas {
+            cursor: crosshair;
+            border-radius: 0.75rem; /* rounded-xl */
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.4);
+            touch-action: none; /* Prevents mobile browser default swipe actions */
+            background-color: #122230;
+        }
+        /* Custom styling for Undo/Redo/Clear buttons */
+        .control-btn {
+            @apply p-3 rounded-xl bg-gray-700 text-white transition duration-200;
+        }
+        .control-btn:not([disabled]) {
+            @apply hover:bg-cyan-700 shadow-md hover:shadow-cyan-500/50;
+        }
+        .control-btn[disabled] {
+            @apply bg-gray-900 opacity-40 cursor-not-allowed;
+        }
+        .control-btn svg {
+            width: 20px;
+            height: 20px;
+        }
+        
+        .brush-btn {
+            @apply px-3 py-2 rounded-lg text-sm font-semibold transition ring-2 ring-transparent bg-gray-600 text-white hover:bg-gray-500 flex items-center justify-center;
+        }
+        .brush-btn.active {
+            @apply ring-cyan-400 bg-cyan-700 hover:bg-cyan-600;
+        }
+        /* Custom style for the size slider track */
+        #brush-size-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #00ffff;
+            cursor: pointer;
+            box-shadow: 0 0 0 4px rgba(0, 255, 255, 0.3);
+        }
+        #brush-size-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #00ffff;
+            cursor: pointer;
+            box-shadow: 0 0 0 4px rgba(0, 255, 255, 0.3);
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 flex flex-col items-center justify-center">
+
+    <div class="max-w-5xl w-full space-y-6">
+        <header class="text-center text-white pb-4 border-b border-cyan-700/50">
+            <h1 class="text-3xl md:text-4xl font-extrabold text-cyan-400">Sound Canvas</h1>
+            <p class="text-sm text-gray-400 mt-1">Draw, Listen, Create. (Y-axis = Pitch, X-axis = Reverb)</p>
+        </header>
+
+        <!-- Control Panel -->
+        <div class="flex flex-col gap-4 p-3 bg-gray-800/50 rounded-lg">
+            
+            <!-- Brush Style Selector -->
+            <div class="flex flex-col gap-3 border-b border-gray-700 pb-3">
+                <div class="flex flex-wrap justify-center gap-2">
+                    <span class="text-gray-300 font-semibold self-center mr-2 text-sm">Brush Style:</span>
+                    
+                    <!-- Path Brushes (Continuous Line Draw) -->
+                    <button id="line-brush" data-style="line" class="brush-btn active">Line</button>
+                    <button id="dot-brush" data-style="dot" class="brush-btn">Dot</button>
+                    <button id="thick-brush" data-style="thick" class="brush-btn">Thick</button>
+
+                    <!-- Shape Brushes (Click-Drag-Release) -->
+                    <span class="text-gray-400 self-center mx-2 text-sm hidden sm:block">|</span>
+                    <button id="square-brush" data-style="square" class="brush-btn" title="Square Stamp">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+                    </button>
+                    <button id="circle-brush" data-style="circle" class="brush-btn" title="Circle Stamp">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>
+                    </button>
+                    <button id="triangle-brush" data-style="triangle" class="brush-btn" title="Triangle Stamp">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19h-8l8-15 8 15z"/></svg>
+                    </button>
+                    <button id="rectangle-brush" data-style="rectangle" class="brush-btn" title="Rectangle Stamp">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="5" rx="2"/></svg>
+                    </button>
+                </div>
+                
+                <!-- Brush Size Slider -->
+                <div class="flex items-center gap-3 w-full max-w-lg mx-auto">
+                    <span class="text-gray-400 text-sm w-16">Brush Size:</span>
+                    <input type="range" id="brush-size-slider" min="5" max="40" value="15" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
+                    <span id="current-size-display" class="text-white text-sm w-8 text-right">15</span>
+                </div>
+
+            </div>
+
+            <div class="flex flex-wrap justify-center gap-3">
+                <!-- Undo/Redo Buttons (Updated) -->
+                <button id="undo-btn" disabled class="control-btn" title="Undo Last Stroke">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3l-2-2.3"/></svg>
+                </button>
+                <button id="redo-btn" disabled class="control-btn" title="Redo Last Undo">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 17v-6h-6"/><path d="M3 7a9 9 0 0 1 9 9 9 9 0 0 1 6-2.3l2 2.3"/></svg>
+                </button>
+
+                <!-- Instrument Selectors (13 options total) -->
+                <!-- Cyan - AMSynth (Default) -->
+                <button id="color-cyan" data-color="#00ffff" title="Cyan (AM Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-cyan-500 bg-[#00ffff]"></button>
+                <!-- Pink - FM Synth -->
+                <button id="color-pink" data-color="#ff0080" title="Pink (FM Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-pink-500 bg-[#ff0080]"></button>
+                <!-- Lime Green - Mono Synth -->
+                <button id="color-lime" data-color="#00ff00" title="Lime Green (Mono Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-green-500 bg-[#00ff00]"></button>
+                <!-- Yellow - Pluck Synth -->
+                <button id="color-yellow" data-color="#ffff00" title="Yellow (Pluck Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-yellow-500 bg-[#ffff00]"></button>
+                <!-- Deep Violet - Duo Synth -->
+                <button id="color-deep-violet" data-color="#8000ff" title="Deep Violet (Duo Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-[#8000ff] bg-[#8000ff]"></button>
+                <!-- Orange - Metal Synth -->
+                <button id="color-orange" data-color="#ffa500" title="Orange (Metal Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-orange-400 bg-[#ffa500]"></button>
+                
+                <!-- Red - Membrane Synth -->
+                <button id="color-red" data-color="#ff0000" title="Red (Membrane Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-red-500 bg-[#ff0000]"></button>
+                <!-- Blue - Triangle Synth -->
+                <button id="color-blue" data-color="#0000ff" title="Blue (Triangle Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-blue-500 bg-[#0000ff]"></button>
+                <!-- Dark Green - Saw AMSynth -->
+                <button id="color-dark-green" data-color="#006400" title="Dark Green (Saw AMSynth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-green-700 bg-[#006400]"></button>
+                <!-- Brown - Muted FM Synth -->
+                <button id="color-brown" data-color="#a52a2a" title="Brown (Muted FM Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-[#a52a2a] bg-[#a52a2a]"></button>
+                <!-- Violet - Soft Synth -->
+                <button id="color-violet" data-color="#ee82ee" title="Violet (Soft Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-[#ee82ee] bg-[#ee82ee]"></button>
+                <!-- Gray - Sine Synth -->
+                <button id="color-gray" data-color="#808080" title="Gray (Sine Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-gray-400 bg-[#808080]"></button>
+                <!-- Black - Noise Synth -->
+                <button id="color-black" data-color="#000000" title="Black (Noise Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-white bg-[#000000]"></button>
+                <!-- White - Poly Synth -->
+                <button id="color-white" data-color="#ffffff" title="White (Poly Synth)"
+                    class="instrument-btn p-3 rounded-full shadow-lg transition transform hover:scale-105 ring-4 ring-transparent hover:ring-white bg-[#ffffff]"></button>
+                
+                <button id="clear-btn" class="px-4 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition ml-4">
+                    Clear Canvas
+                </button>
+            </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="w-full aspect-[4/3] max-h-[70vh]">
+            <canvas id="drawing-canvas" class="w-full h-full"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // --- Configuration ---
+        const canvas = document.getElementById('drawing-canvas');
+        const ctx = canvas.getContext('2d');
+        const colorButtons = document.querySelectorAll('.instrument-btn');
+        const brushButtons = document.querySelectorAll('.brush-btn');
+        const clearButton = document.getElementById('clear-btn');
+        const undoButton = document.getElementById('undo-btn');
+        const redoButton = document.getElementById('redo-btn');
+        const brushSizeSlider = document.getElementById('brush-size-slider');
+        const currentSizeDisplay = document.getElementById('current-size-display');
+
+
+        // --- State Variables ---
+        let isDrawing = false;
+        let prevX = 0; // Used for continuous line/dot drawing
+        let prevY = 0;
+        let initialDrawX = 0; // Used as the anchor point for shapes
+        let initialDrawY = 0;
+        let selectedColor = '#00ffff'; // Default color: Cyan
+        let currentBrushStyle = 'line'; 
+        let currentSynth = null;
+        let isToneStarted = false;
+        let brushSizeBase = parseInt(brushSizeSlider.value); // Dynamic size for shapes and dots
+
+        // --- History State ---
+        let currentStrokePoints = []; // Stores points for the current stroke being drawn (path or two anchor points for shape)
+        let undoStack = []; // Stores completed stroke objects for undo
+        let redoStack = []; // Stores undone stroke objects for redo
+
+        // --- Constants ---
+        const LINE_WIDTH = 4;
+        const THICK_LINE_WIDTH = 12;
+
+        // --- Audio Setup (Tone.js) ---
+        const feedbackDelay = new Tone.FeedbackDelay("8n", 0.5).toDestination();
+        const reverb = new Tone.Reverb(2).connect(feedbackDelay);
+        const masterVolume = new Tone.Volume(-10).connect(reverb);
+        
+        /** Maps color hex code to the synth configuration (Class and Options) */
+        const instrumentConfigs = {
+            '#00ffff': { type: Tone.AMSynth, name: 'AMSynth', isPercussive: false, options: { envelope: { attack: 0.5, release: 3 } } }, // Cyan
+            '#ff0080': { type: Tone.FMSynth, name: 'FMSynth', isPercussive: false, options: { harmonicity: 3, modulationIndex: 10, envelope: { attack: 0.1, release: 5 } } }, // Pink
+            '#00ff00': { type: Tone.MonoSynth, name: 'MonoSynth', isPercussive: false, options: { oscillator: { type: "square" }, envelope: { attack: 0.3, release: 4 } } }, // Lime Green
+            '#ffff00': { type: Tone.PluckSynth, name: 'PluckSynth', isPercussive: true, options: { attackNoise: 2, resonance: 0.8, dampening: 4000 } }, // Yellow
+            '#8000ff': { type: Tone.DuoSynth, name: 'DuoSynth', isPercussive: false, options: { vibratoAmount: 0.5, vibratoRate: 5, harmonicity: 1.5, voice0: { volume: -10, envelope: { attack: 1, release: 5, sustain: 0.8 } }, voice1: { volume: -10, envelope: { attack: 1.5, release: 6, sustain: 0.5 } } } }, // Deep Violet
+            '#ffa500': { type: Tone.MetalSynth, name: 'MetalSynth', isPercussive: true, options: { frequency: 20, envelope: { attack: 0.01, release: 2 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000 } }, // Orange
+            
+            // NEW COLORS
+            '#ff0000': { type: Tone.MembraneSynth, name: 'MembraneSynth', isPercussive: true, options: { pitchDecay: 0.008, octave: 2, oscillator: { type: 'sine' }, envelope: { attack: 0.01, sustain: 0.01, release: 0.5 } } }, // Red (Percussive)
+            '#0000ff': { type: Tone.Synth, name: 'Synth_Blue', isPercussive: false, options: { oscillator: { type: "triangle" }, envelope: { attack: 2, decay: 1, sustain: 0.9, release: 5 } } }, // Blue (Soft Pad)
+            '#006400': { type: Tone.AMSynth, name: 'AMSynth_DarkGreen', isPercussive: false, options: { harmonicity: 1, volume: -8, oscillator: { type: "sawtooth" }, envelope: { attack: 0.2, release: 3 } } }, // Dark Green (Gritty)
+            '#a52a2a': { type: Tone.FMSynth, name: 'FMSynth_Brown', isPercussive: false, options: { harmonicity: 0.5, modulationIndex: 0.5, volume: -15, envelope: { attack: 4, release: 10 } } }, // Brown (Muted Hum)
+            '#ee82ee': { type: Tone.Synth, name: 'Synth_Violet', isPercussive: false, options: { oscillator: { type: "sine" }, volume: -8, envelope: { attack: 1.5, release: 3 } } }, // Violet (Soft Sine)
+            '#808080': { type: Tone.Synth, name: 'Synth_Gray', isPercussive: false, options: { oscillator: { type: "sine" }, volume: -12, envelope: { attack: 1, release: 2 } } }, // Gray (Quiet Sine)
+            '#000000': { type: Tone.NoiseSynth, name: 'NoiseSynth', isPercussive: true, options: { noise: { type: 'white' }, envelope: { attack: 1, decay: 0.5, sustain: 1, release: 2 } } }, // Black (Noise)
+            '#ffffff': { type: Tone.PolySynth, name: 'PolySynth', isPercussive: false, options: { polyphony: 4, voice: Tone.Synth, options: { oscillator: { type: "square" }, envelope: { attack: 0.5, release: 4 } } } } // White (Rich Pad)
+        };
+
+        /** Creates and connects the current synth instance based on selectedColor */
+        const createSynth = (color) => {
+            if (currentSynth) {
+                currentSynth.dispose();
+            }
+
+            const config = instrumentConfigs[color];
+            
+            if (!config) {
+                console.error("Invalid color selected. Falling back to default.");
+                return;
+            }
+
+            const SynthClass = config.type;
+            const options = config.options;
+
+            if (SynthClass === Tone.PolySynth) {
+                currentSynth = new SynthClass(options).connect(masterVolume);
+            } else {
+                currentSynth = new SynthClass(options).connect(masterVolume);
+            }
+        };
+        
+        // Initialize the default synth
+        createSynth(selectedColor);
+
+
+        // --- Mapping Functions ---
+
+        /** Maps Y position to musical frequency (pitch) */
+        const mapYtoFrequency = (y) => {
+            const minMidi = 36; // C2
+            const maxMidi = 84; // C6
+            const midiRange = maxMidi - minMidi;
+
+            const normalizedY = y / canvas.height; 
+            
+            const midiValue = minMidi + (1 - normalizedY) * midiRange;
+            
+            const freq = new Tone.Frequency(midiValue, "midi").toFrequency();
+            return freq;
+        };
+
+        /** Maps X position to Reverb Wet/Mix */
+        const mapXtoAmbience = (x) => {
+            const normalizedX = x / canvas.width;
+            const reverbMix = normalizedX * 0.7; 
+            reverb.set({ wet: reverbMix });
+            feedbackDelay.set({ wet: normalizedX * 0.3 }); 
+        };
+
+        // --- Utility Functions ---
+
+        const isShapeBrush = (style) => ['square', 'circle', 'triangle', 'rectangle'].includes(style);
+        const isPathBrush = (style) => ['line', 'dot', 'thick'].includes(style);
+
+        /** Draws a shape using two corner points (for live drawing and history) */
+        const drawShape = (x1, y1, x2, y2, style, color, size) => {
+            ctx.fillStyle = color;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1; // Shapes are filled, line width is minimal
+
+            const width = x2 - x1;
+            const height = y2 - y1;
+            const center = { x: x1 + width / 2, y: y1 + height / 2 };
+
+            switch (style) {
+                case 'square':
+                    // Force square aspect ratio based on the smaller dimension (abs(width) or abs(height))
+                    const side = Math.min(Math.abs(width), Math.abs(height));
+                    const finalX = width > 0 ? x1 : x1 - side;
+                    const finalY = height > 0 ? y1 : y1 - side;
+                    ctx.fillRect(finalX, finalY, width > 0 ? side : -side, height > 0 ? side : -side);
+                    break;
+                case 'rectangle':
+                    ctx.fillRect(x1, y1, width, height);
+                    break;
+                case 'circle':
+                    // Draw a circle centered on the midpoint, with radius based on the distance from center to one corner
+                    const radius = Math.sqrt(width * width + height * height) / 2;
+                    ctx.beginPath();
+                    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case 'triangle':
+                    ctx.beginPath();
+                    ctx.moveTo(x1 + width / 2, y1); // Top/Center point
+                    ctx.lineTo(x1, y2); // Bottom-left point
+                    ctx.lineTo(x2, y2); // Bottom-right point
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case 'dot':
+                    // This is used for redrawing continuous dot paths
+                    const dotRadius = size * 0.2;
+                    ctx.beginPath();
+                    ctx.arc(x1, y1, dotRadius < 2 ? 2 : dotRadius, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+            }
+        };
+
+        /** Triggers a short, percussive sound for shape creation (when released) */
+        const triggerShapeSound = (x, y, config) => {
+            const freq = mapYtoFrequency(y);
+            mapXtoAmbience(x);
+
+            if (config.name === 'NoiseSynth') {
+                currentSynth.triggerAttackRelease("4n");
+            } else {
+                currentSynth.triggerAttackRelease(freq, "8n");
+            }
+        };
+
+        // --- Drawing and History Functions ---
+        
+        /** Clears the canvas and redraws all strokes from the undoStack. */
+        const redrawCanvas = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (undoStack.length === 0) {
+                ctx.font = "20px 'Inter'";
+                ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+                ctx.textAlign = "center";
+                ctx.fillText("Click or Touch and Drag to Draw Sound", canvas.width / 2, canvas.height / 2);
+                return;
+            }
+
+            undoStack.forEach(stroke => {
+                const style = stroke.brushStyle;
+                const size = stroke.size; 
+
+                if (isShapeBrush(style) && stroke.points.length === 2) {
+                    // Redraw shapes using the start and end points
+                    const p1 = stroke.points[0];
+                    const p2 = stroke.points[1];
+                    drawShape(p1.x, p1.y, p2.x, p2.y, style, stroke.color, size);
+                    
+                } else if (style === 'dot') {
+                    // Redraw continuous dot strokes
+                    ctx.fillStyle = stroke.color;
+                    stroke.points.forEach(point => {
+                        drawShape(point.x, point.y, null, null, style, stroke.color, size); // p1=x, p2=y, null for other params
+                    });
+
+                } else { // 'line' or 'thick' brushes
+                    ctx.strokeStyle = stroke.color;
+                    ctx.lineCap = 'round';
+                    ctx.lineWidth = size; 
+
+                    if (stroke.points.length > 0) {
+                        ctx.beginPath();
+                        ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+                        for (let i = 1; i < stroke.points.length; i++) {
+                            ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+                        }
+                        ctx.stroke();
+                    }
+                }
+            });
+        };
+
+        /** Sets the canvas size to match the container and maintains high resolution */
+        const resizeCanvas = () => {
+            const rect = canvas.parentNode.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            redrawCanvas();
+        };
+
+        /** Handles continuous mouse/touch movement */
+        const draw = (e) => {
+            if (!isDrawing) return;
+            e.preventDefault(); 
+
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            const rect = canvas.getBoundingClientRect();
+            const currentX = clientX - rect.left;
+            const currentY = clientY - rect.top;
+            
+            const config = instrumentConfigs[selectedColor];
+
+            if (isPathBrush(currentBrushStyle)) {
+                // --- PATH DRAWING LOGIC (Line / Dot / Thick) ---
+
+                // 1. Visual Drawing
+                ctx.strokeStyle = selectedColor;
+                ctx.fillStyle = selectedColor;
+                ctx.lineCap = 'round';
+
+                if (currentBrushStyle === 'dot') {
+                    drawShape(currentX, currentY, null, null, 'dot', selectedColor, brushSizeBase);
+                } else {
+                    ctx.lineWidth = currentBrushStyle === 'thick' ? THICK_LINE_WIDTH : LINE_WIDTH;
+                    ctx.beginPath();
+                    ctx.moveTo(prevX, prevY);
+                    ctx.lineTo(currentX, currentY);
+                    ctx.stroke();
+                }
+
+                // 2. Record point for history
+                currentStrokePoints.push({ x: currentX, y: currentY });
+
+                // 3. Audio Control
+                mapXtoAmbience(currentX);
+                if (config.name !== 'NoiseSynth' && !config.isPercussive) {
+                    currentSynth.frequency.value = mapYtoFrequency(currentY);
+                }
+
+                // Update previous position for the next segment
+                [prevX, prevY] = [currentX, currentY];
+
+            } else if (isShapeBrush(currentBrushStyle)) {
+                // --- SHAPE DRAWING LOGIC (Square / Circle / Triangle / Rectangle) ---
+
+                // 1. Redraw previous strokes and then draw the live shape
+                redrawCanvas();
+                drawShape(initialDrawX, initialDrawY, currentX, currentY, currentBrushStyle, selectedColor, brushSizeBase);
+
+                // 2. Audio Control (based on the shape's dynamic center point)
+                const centerX = initialDrawX + (currentX - initialDrawX) / 2;
+                const centerY = initialDrawY + (currentY - initialDrawY) / 2;
+
+                mapXtoAmbience(centerX);
+                if (config.name !== 'NoiseSynth' && !config.isPercussive) {
+                    currentSynth.frequency.value = mapYtoFrequency(centerY);
+                }
+            }
+        };
+
+        /** Initiates the drawing process and starts the sound */
+        const startDraw = (e) => {
+            e.preventDefault(); 
+            
+            if (!isToneStarted) {
+                Tone.start();
+                isToneStarted = true;
+            }
+            
+            // New action clears redo stack
+            redoStack = []; 
+            currentStrokePoints = [];
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            const rect = canvas.getBoundingClientRect();
+            const startX = clientX - rect.left;
+            const startY = clientY - rect.top;
+
+            // Set anchor points for both types of drawing
+            initialDrawX = startX;
+            initialDrawY = startY;
+            prevX = startX;
+            prevY = startY;
+
+            isDrawing = true;
+
+            const config = instrumentConfigs[selectedColor];
+
+            if (isPathBrush(currentBrushStyle)) {
+                // Start path stroke logic
+                currentStrokePoints.push({ x: startX, y: startY }); 
+                
+                mapXtoAmbience(startX);
+                const freq = mapYtoFrequency(startY);
+                
+                if (config.name === 'NoiseSynth') {
+                    currentSynth.triggerAttack();
+                } else if (config.isPercussive) {
+                    currentSynth.triggerAttack(freq, Tone.now(), 0.5); 
+                } else {
+                    currentSynth.triggerAttack(freq);
+                }
+            }
+            // For shapes, sound is controlled continuously in the `draw` function
+
+            updateControlButtons();
+        };
+
+        /** Stops drawing, saves the stroke to history, and releases the sound */
+        const stopDraw = (e) => {
+            if (!isDrawing) return;
+
+            // Get final position (needed for shapes)
+            const clientX = e.touches ? e.changedTouches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.changedTouches[0].clientY : e.clientY;
+            
+            const rect = canvas.getBoundingClientRect();
+            const finalX = clientX - rect.left;
+            const finalY = clientY - rect.top;
+
+            const config = instrumentConfigs[selectedColor];
+
+            if (isShapeBrush(currentBrushStyle)) {
+                // SHAPE RELEASE LOGIC
+                // 1. Save the final shape to history (2 points: anchor and release point)
+                if (Math.abs(finalX - initialDrawX) > 5 || Math.abs(finalY - initialDrawY) > 5) {
+                    // Only save if the shape has a discernible size
+                    undoStack.push({
+                        color: selectedColor,
+                        brushStyle: currentBrushStyle,
+                        size: brushSizeBase,
+                        points: [{ x: initialDrawX, y: initialDrawY }, { x: finalX, y: finalY }] 
+                    });
+                }
+                
+                // 2. Play a percussive sound on release (optional, for feedback)
+                triggerShapeSound(finalX, finalY, config); 
+                
+            } else if (isPathBrush(currentBrushStyle)) {
+                // PATH RELEASE LOGIC
+                // Only save completed line/dot strokes
+                if (currentStrokePoints.length > 1 || currentBrushStyle === 'dot') {
+                    let sizeToSave = currentBrushStyle === 'dot' ? brushSizeBase : 
+                                     currentBrushStyle === 'thick' ? THICK_LINE_WIDTH : LINE_WIDTH;
+                    
+                    undoStack.push({
+                        color: selectedColor,
+                        brushStyle: currentBrushStyle, 
+                        size: sizeToSave, 
+                        points: currentStrokePoints
+                    });
+                }
+
+                // Stop continuous sound
+                if (config.isPercussive || config.name === 'NoiseSynth' || isPathBrush(currentBrushStyle)) {
+                    currentSynth.triggerRelease(Tone.now() + 0.1);
+                }
+            }
+            
+            isDrawing = false;
+            currentStrokePoints = []; 
+            redrawCanvas(); // Redraw to finalize the last shape/path
+
+            updateControlButtons();
+        };
+
+        /** Moves the last stroke from undoStack to redoStack and redraws. */
+        const undoAction = () => {
+            if (undoStack.length > 0) {
+                const undoneStroke = undoStack.pop();
+                redoStack.push(undoneStroke);
+                redrawCanvas();
+                updateControlButtons();
+            }
+        };
+
+        /** Moves the last stroke from redoStack back to undoStack and redraws. */
+        const redoAction = () => {
+            if (redoStack.length > 0) {
+                const redoneStroke = redoStack.pop();
+                undoStack.push(redoneStroke);
+                redrawCanvas();
+                updateControlButtons();
+            }
+        };
+
+        /** Updates the enabled/disabled state of the Undo/Redo buttons. */
+        const updateControlButtons = () => {
+            undoButton.disabled = undoStack.length === 0;
+            redoButton.disabled = redoStack.length === 0;
+        };
+
+
+        // --- Event Handlers ---
+        
+        /** Handles changing the instrument/color */
+        const handleInstrumentChange = (event) => {
+            const newColor = event.currentTarget.dataset.color;
+
+            // UI: remove ring from all, add ring to selected
+            colorButtons.forEach(btn => {
+                btn.classList.remove('ring-cyan-500', 'ring-pink-500', 'ring-green-500', 'ring-yellow-500', 'ring-orange-400', 'ring-red-500', 'ring-blue-500', 'ring-green-700', 'ring-gray-400', 'ring-white');
+                btn.classList.remove('ring-[#8000ff]', 'ring-[#a52a2a]', 'ring-[#ee82ee]');
+                btn.classList.add('ring-transparent');
+            });
+            event.currentTarget.classList.remove('ring-transparent');
+            
+            // Re-apply the ring based on the new color
+            if (newColor === '#00ffff') event.currentTarget.classList.add('ring-cyan-500');
+            else if (newColor === '#ff0080') event.currentTarget.classList.add('ring-pink-500');
+            else if (newColor === '#00ff00') event.currentTarget.classList.add('ring-green-500'); 
+            else if (newColor === '#ffff00') event.currentTarget.classList.add('ring-yellow-500');
+            else if (newColor === '#8000ff') event.currentTarget.classList.add('ring-[#8000ff]'); 
+            else if (newColor === '#ffa500') event.currentTarget.classList.add('ring-orange-400'); 
+            else if (newColor === '#ff0000') event.currentTarget.classList.add('ring-red-500'); 
+            else if (newColor === '#0000ff') event.currentTarget.classList.add('ring-blue-500'); 
+            else if (newColor === '#006400') event.currentTarget.classList.add('ring-green-700'); 
+            else if (newColor === '#a52a2a') event.currentTarget.classList.add('ring-[#a52a2a]'); 
+            else if (newColor === '#ee82ee') event.currentTarget.classList.add('ring-[#ee82ee]'); 
+            else if (newColor === '#808080') event.currentTarget.classList.add('ring-gray-400'); 
+            else if (newColor === '#000000') event.currentTarget.classList.add('ring-white'); 
+            else if (newColor === '#ffffff') event.currentTarget.classList.add('ring-white'); 
+
+            selectedColor = newColor;
+            
+            if (isDrawing && currentSynth) {
+                currentSynth.triggerRelease(Tone.now());
+            }
+
+            createSynth(selectedColor);
+        };
+
+        /** Handles changing the brush style */
+        const handleBrushChange = (event) => {
+            const newStyle = event.currentTarget.dataset.style;
+
+            // Update UI: remove active class from all, add to selected
+            brushButtons.forEach(btn => btn.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            currentBrushStyle = newStyle;
+        };
+        
+        /** Handles changing the brush size via slider */
+        const handleSizeChange = (event) => {
+            brushSizeBase = parseInt(event.target.value);
+            currentSizeDisplay.textContent = brushSizeBase;
+        };
+
+
+        /** Clears the canvas and the entire history */
+        const handleClear = () => {
+            undoStack = [];
+            redoStack = [];
+            redrawCanvas(); 
+            updateControlButtons();
+        };
+
+        // --- Initialization ---
+        
+        const init = () => {
+            // Set initial active states
+            document.getElementById('color-cyan').classList.add('ring-cyan-500');
+            document.getElementById('line-brush').classList.add('active');
+
+
+            // 1. Canvas and Window Events
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
+            // Add Control listeners
+            undoButton.addEventListener('click', undoAction);
+            redoButton.addEventListener('click', redoAction);
+            clearButton.addEventListener('click', handleClear);
+            brushSizeSlider.addEventListener('input', handleSizeChange); // Listen for size changes
+
+            // Mouse Events
+            canvas.addEventListener('mousedown', startDraw);
+            canvas.addEventListener('mousemove', draw);
+            window.addEventListener('mouseup', stopDraw);
+            window.addEventListener('mouseleave', stopDraw); 
+
+            // Touch Events (for mobile responsiveness)
+            canvas.addEventListener('touchstart', startDraw);
+            canvas.addEventListener('touchmove', draw);
+            window.addEventListener('touchend', stopDraw);
+            window.addEventListener('touchcancel', stopDraw);
+            
+            // 2. Instrument & Brush Events
+            colorButtons.forEach(btn => {
+                btn.addEventListener('click', handleInstrumentChange);
+            });
+            brushButtons.forEach(btn => {
+                btn.addEventListener('click', handleBrushChange);
+            });
+            
+            // Draw initial message and set initial button state
+            redrawCanvas();
+            updateControlButtons();
+        };
+
+        window.onload = init;
+    </script>
+</body>
+</html>
